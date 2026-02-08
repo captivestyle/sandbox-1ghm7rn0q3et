@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useLoader } from '@react-three/fiber';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+import { GLTFLoader } from 'three-stdlib';
 import * as THREE from 'three';
 
 /**
