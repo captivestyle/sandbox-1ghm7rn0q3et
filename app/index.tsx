@@ -1,98 +1,199 @@
 import { View, StyleSheet, Text } from 'react-native';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { useRef, useState } from 'react';
+import { Canvas, useFrame, useLoader } from '@react-three/fiber';
+import { useRef, useState, useEffect } from 'react';
 import * as THREE from 'three';
-import { useNormalizedModel } from '@/hooks/useNormalizedModel';
+import { GLTFLoader } from 'three-stdlib';
+import type { GLTF } from 'three-stdlib';
 
-function SwappingModels() {
-  const groupRef = useRef<THREE.Group>(null);
-  const controllerRef = useRef<THREE.Group>(null);
-  const bloomRef = useRef<THREE.Group>(null);
+// Hills component - creates a rolling terrain
+function Hills() {
+  const hillsRef = useRef<THREE.Group>(null);
+  const hillsData = useRef<Array<{ x: number; z: number; height: number; width: number }>>([]);
 
-  const controller = useNormalizedModel(require('../public/models/controller.glb'), 4.5);
-  const bloom = useNormalizedModel(require('../public/models/bloom-logo-3d-model.glb'), 4.5);
-
-  const [showController, setShowController] = useState(true);
-  const lastSwapRef = useRef(0);
+  // Initialize hills
+  useEffect(() => {
+    const hills = [];
+    for (let i = 0; i < 20; i++) {
+      hills.push({
+        x: i * 8 - 40,
+        z: Math.random() * 10 - 5,
+        height: Math.random() * 3 + 2,
+        width: Math.random() * 5 + 4,
+      });
+    }
+    hillsData.current = hills;
+  }, []);
 
   useFrame((state, delta) => {
-    if (groupRef.current) {
-      // Variable speed with smooth ease-in-out: slow when facing us, fast when rotated away
-      const phaseShift = - Math.PI / 3;
-      const normalizedCos = (1 - Math.cos(groupRef.current.rotation.y + phaseShift)) / 2;
-      const eased = normalizedCos * normalizedCos * (3 - 2 * normalizedCos);
-      const speed = .5 + eased * 10;
-      groupRef.current.rotation.y += delta * speed;
-
-      // Calculate scale based on speed (smaller when moving fast)
-      const normalizedSpeed = (speed - 0.3) / (10.3 - 0.3);
-      const scale = 1 - (normalizedSpeed * 0.98);
-
-      // Track rotation for swap detection
-      const currentRotation = groupRef.current.rotation.y;
-      const rotationsSinceLastSwap = Math.floor(currentRotation / (Math.PI * 2)) - lastSwapRef.current;
-
-      // Swap when scale is very small AND we've completed a rotation
-      if (scale < 0.05 && rotationsSinceLastSwap >= 1) {
-        setShowController(prev => !prev);
-        lastSwapRef.current = Math.floor(currentRotation / (Math.PI * 2));
-      }
-
-      // Apply scale to both models
-      if (controllerRef.current) {
-        controllerRef.current.scale.setScalar(scale);
-      }
-      if (bloomRef.current) {
-        bloomRef.current.scale.setScalar(scale);
+    // Move hills backwards to create scrolling effect
+    if (hillsRef.current) {
+      hillsRef.current.position.x -= delta * 5;
+      
+      // Reset position when hills move too far
+      if (hillsRef.current.position.x < -40) {
+        hillsRef.current.position.x = 0;
       }
     }
   });
 
   return (
-    <group ref={groupRef} position={[0, 0, -5]}>
-      {showController && (
-        <group ref={controllerRef}>
-          <primitive
-            object={controller.scene}
-            rotation={[Math.PI / 6, 0, Math.PI / 4]}
-          />
-        </group>
-      )}
-      {!showController && (
-        <group ref={bloomRef}>
-          <primitive object={bloom.scene} />
-        </group>
-      )}
+    <group ref={hillsRef}>
+      {hillsData.current.map((hill, index) => (
+        <mesh key={index} position={[hill.x, -hill.height / 2, hill.z]} castShadow receiveShadow>
+          <sphereGeometry args={[hill.width, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+          <meshStandardMaterial color="#4a9b5c" />
+        </mesh>
+      ))}
     </group>
+  );
+}
+
+// Ground plane
+function Ground() {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, 0]} receiveShadow>
+      <planeGeometry args={[100, 30]} />
+      <meshStandardMaterial color="#3d7a4a" />
+    </mesh>
+  );
+}
+
+// Kangaroo component with jumping mechanics
+function Kangaroo() {
+  const kangarooRef = useRef<THREE.Group>(null);
+  const [isJumping, setIsJumping] = useState(false);
+  const velocityY = useRef(0);
+  const positionY = useRef(0);
+  const gravity = -15;
+  const jumpForce = 8;
+  const groundLevel = 0;
+
+  // Load kangaroo model
+  const gltf = useLoader(GLTFLoader, require('../assets/models/kangaroo.glb')) as GLTF;
+
+  // Auto jump every 2 seconds
+  useEffect(() => {
+    const jumpInterval = setInterval(() => {
+      if (!isJumping) {
+        setIsJumping(true);
+        velocityY.current = jumpForce;
+      }
+    }, 2000);
+
+    return () => clearInterval(jumpInterval);
+  }, [isJumping]);
+
+  useFrame((state, delta) => {
+    if (kangarooRef.current) {
+      // Apply gravity
+      if (isJumping) {
+        velocityY.current += gravity * delta;
+        positionY.current += velocityY.current * delta;
+
+        // Land on ground
+        if (positionY.current <= groundLevel) {
+          positionY.current = groundLevel;
+          velocityY.current = 0;
+          setIsJumping(false);
+        }
+
+        kangarooRef.current.position.y = positionY.current;
+      }
+
+      // Add slight rotation animation
+      kangarooRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 2) * 0.1;
+    }
+  });
+
+  return (
+    <group ref={kangarooRef} position={[0, 0, 0]}>
+      <primitive object={gltf.scene.clone()} scale={1.5} rotation={[0, Math.PI / 2, 0]} />
+    </group>
+  );
+}
+
+// Sky background
+function Sky() {
+  return (
+    <mesh position={[0, 0, -15]}>
+      <planeGeometry args={[100, 50]} />
+      <meshBasicMaterial color="#87CEEB" />
+    </mesh>
+  );
+}
+
+// Clouds
+function Clouds() {
+  const cloudsRef = useRef<THREE.Group>(null);
+
+  useFrame((state, delta) => {
+    if (cloudsRef.current) {
+      cloudsRef.current.position.x -= delta * 2;
+      
+      if (cloudsRef.current.position.x < -50) {
+        cloudsRef.current.position.x = 0;
+      }
+    }
+  });
+
+  return (
+    <group ref={cloudsRef}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <group key={i} position={[i * 20 - 20, 8 + Math.sin(i) * 2, -10]}>
+          <mesh position={[0, 0, 0]}>
+            <sphereGeometry args={[1.5, 16, 16]} />
+            <meshBasicMaterial color="#ffffff" opacity={0.8} transparent />
+          </mesh>
+          <mesh position={[1.5, 0, 0]}>
+            <sphereGeometry args={[1.2, 16, 16]} />
+            <meshBasicMaterial color="#ffffff" opacity={0.8} transparent />
+          </mesh>
+          <mesh position={[-1.2, 0, 0]}>
+            <sphereGeometry args={[1, 16, 16]} />
+            <meshBasicMaterial color="#ffffff" opacity={0.8} transparent />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+// Main game scene
+function GameScene() {
+  return (
+    <>
+      <Sky />
+      <Clouds />
+      <ambientLight intensity={0.6} />
+      <directionalLight 
+        position={[10, 10, 5]} 
+        intensity={1} 
+        castShadow
+        shadow-mapSize-width={1024}
+        shadow-mapSize-height={1024}
+      />
+      <Ground />
+      <Hills />
+      <Kangaroo />
+    </>
   );
 }
 
 export default function HomeScreen() {
   return (
     <View style={styles.container}>
+      <Text style={styles.title}>Jumping Kangaroo</Text>
       <View style={styles.canvasContainer}>
-        <Canvas camera={{ position: [0, 0, 10], fov: 50 }}>
-          <ambientLight intensity={0.5} />
-          <directionalLight position={[5, 5, 5]} intensity={1} />
-          <SwappingModels />
+        <Canvas 
+          camera={{ position: [0, 2, 12], fov: 60 }}
+          shadows
+        >
+          <GameScene />
         </Canvas>
       </View>
-      <View style={styles.content}>
-        <Text style={styles.title}>Bloom 3D</Text>
-        <Text style={styles.subtitle}>
-          Build 3D games with AI. Describe your game and watch it come to life.
-        </Text>
-        <Text style={styles.instructions}>
-          Tell Bloom 3D what you want to create. No coding required.
-        </Text>
-        <View style={styles.examples}>
-          <Text style={styles.examplesTitle}>Try saying:</Text>
-          <Text style={styles.example}>• "Create a platformer where I collect 10 rotating gems before time runs out"</Text>
-          <Text style={styles.example}>• "Make a racing game where I pass through checkpoints to reach the finish line"</Text>
-          <Text style={styles.example}>• "Build a maze where I collect all the golden coins to unlock the exit"</Text>
-          <Text style={styles.example}>• "Add floating crystals that give me powerups when I touch them"</Text>
-        </View>
-      </View>
+      <Text style={styles.instructions}>
+        Watch the kangaroo jump over the rolling hills!
+      </Text>
     </View>
   );
 }
@@ -100,59 +201,31 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: '#1a1a1a',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
   },
   canvasContainer: {
-    width: 300,
-    height: 300,
-    marginBottom: 32,
-  },
-  content: {
-    maxWidth: 600,
-    alignItems: 'center',
+    width: '100%',
+    height: 500,
+    maxWidth: 800,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#4a9b5c',
   },
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: '#ffffff',
-    marginBottom: 16,
+    color: '#4a9b5c',
+    marginBottom: 20,
     textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 18,
-    color: '#a0a0a0',
-    marginBottom: 12,
-    textAlign: 'center',
-    lineHeight: 26,
   },
   instructions: {
     fontSize: 16,
-    color: '#808080',
-    marginBottom: 32,
-    textAlign: 'center',
-    fontStyle: 'italic',
-  },
-  examples: {
-    backgroundColor: '#1a1a1a',
-    padding: 20,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#333',
-    width: '100%',
-  },
-  examplesTitle: {
-    fontSize: 14,
-    color: '#ffffff',
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  example: {
-    fontSize: 14,
     color: '#a0a0a0',
-    marginBottom: 8,
-    lineHeight: 20,
+    marginTop: 20,
+    textAlign: 'center',
   },
 });
